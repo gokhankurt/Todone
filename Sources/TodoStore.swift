@@ -158,6 +158,6 @@ class TodoStore {
 
     static let defaultSections: [TodoSection] = [
         TodoSection(id: "todos-weekly", title: "TODOs - Weekly", isExpanded: true, items: []),
-        TodoSection(id: "todos-backlog", title: "TODOs - Backlog", isExpanded: true, items: []),
+        TodoSection(id: "backlog", title: "Backlog", isExpanded: true, items: []),
     ]
 }

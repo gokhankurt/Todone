@@ -41,7 +41,7 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.white)
+        .background(Color(.windowBackgroundColor))
     }
 }
 
@@ -201,7 +201,7 @@ struct TodoRowView: View {
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 3)
-                .fill(isHovered ? Color.black.opacity(0.035) : .clear)
+                .fill(isHovered ? Color.primary.opacity(0.05) : .clear)
         )
         .onHover { isHovered = $0 }
         .onChange(of: item.done) {
