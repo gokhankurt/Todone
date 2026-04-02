@@ -23,7 +23,6 @@ struct TodoSection: Identifiable, Equatable {
 @Observable
 class TodoStore {
     var sections: [TodoSection]
-
     let fileURL: URL
 
     init() {
@@ -38,7 +37,11 @@ class TodoStore {
            !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             self.sections = Self.parse(content)
         } else {
-            self.sections = Self.defaultSections
+            let cw = Self.currentCalendarWeek
+            self.sections = [
+                TodoSection(id: "w\(cw)", title: "W\(cw)", isExpanded: true, items: []),
+                TodoSection(id: "backlog", title: "Backlog", isExpanded: true, items: []),
+            ]
             save()
         }
     }
@@ -46,6 +49,39 @@ class TodoStore {
     func save() {
         let content = Self.render(sections)
         try? content.write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: - Week management
+
+    static var currentCalendarWeek: Int {
+        Calendar.current.component(.weekOfYear, from: Date())
+    }
+
+    func ensureWeekSection(_ week: Int) {
+        let id = "w\(week)"
+        guard !sections.contains(where: { $0.id == id }) else { return }
+        let section = TodoSection(id: id, title: "W\(week)", isExpanded: true, items: [])
+        if let backlogIdx = sections.firstIndex(where: { $0.id == "backlog" }) {
+            sections.insert(section, at: backlogIdx)
+        } else {
+            sections.append(section)
+        }
+    }
+
+    static func isWeeklySection(_ section: TodoSection) -> Bool {
+        section.id.hasPrefix("w") && Int(section.id.dropFirst()) != nil
+    }
+
+    static func weekNumber(from section: TodoSection) -> Int? {
+        guard isWeeklySection(section) else { return nil }
+        return Int(section.id.dropFirst())
+    }
+
+    func weeksWithContent() -> Set<Int> {
+        Set(sections.compactMap { section -> Int? in
+            guard Self.isWeeklySection(section), !section.items.isEmpty else { return nil }
+            return Self.weekNumber(from: section)
+        })
     }
 
     // MARK: - Mutations
@@ -86,19 +122,12 @@ class TodoStore {
         save()
     }
 
-    func targetSectionID(for sectionID: String) -> String? {
-        guard let idx = sections.firstIndex(where: { $0.id == sectionID }) else { return nil }
-        if idx == 0 && sections.count > 1 { return sections[1].id }
-        if idx > 0 { return sections[0].id }
-        return nil
-    }
-
     func toggleSection(_ sectionID: String) {
         guard let si = sections.firstIndex(where: { $0.id == sectionID }) else { return }
         sections[si].isExpanded.toggle()
     }
 
-    // MARK: - Markdown parsing
+    // MARK: - Markdown persistence
 
     static func parse(_ content: String) -> [TodoSection] {
         var sections: [TodoSection] = []
@@ -131,12 +160,66 @@ class TodoStore {
             ))
         }
 
-        return sections.isEmpty ? defaultSections : sections
+        // Migrate old formats
+        let cw = currentCalendarWeek
+
+        // "TODOs - Backlog" (slug: todos-backlog) → "Backlog" (id: backlog)
+        for i in 0..<sections.count {
+            let id = sections[i].id
+            if id != "backlog" && id.contains("backlog") {
+                if let existing = sections.firstIndex(where: { $0.id == "backlog" }) {
+                    sections[existing].items.append(contentsOf: sections[i].items)
+                    sections.remove(at: i)
+                } else {
+                    sections[i] = TodoSection(
+                        id: "backlog", title: "Backlog",
+                        isExpanded: true, items: sections[i].items
+                    )
+                }
+                break
+            }
+        }
+
+        // "TODOs - Weekly" (slug: todos-weekly) → "W{currentWeek}"
+        for i in 0..<sections.count {
+            if sections[i].id == "todos-weekly" || sections[i].id.contains("weekly") {
+                let existingID = "w\(cw)"
+                if let existing = sections.firstIndex(where: { $0.id == existingID }) {
+                    sections[existing].items.append(contentsOf: sections[i].items)
+                    sections.remove(at: i)
+                } else {
+                    sections[i] = TodoSection(
+                        id: existingID, title: "W\(cw)",
+                        isExpanded: true, items: sections[i].items
+                    )
+                }
+                break
+            }
+        }
+
+        if sections.isEmpty {
+            return [
+                TodoSection(id: "w\(cw)", title: "W\(cw)", isExpanded: true, items: []),
+                TodoSection(id: "backlog", title: "Backlog", isExpanded: true, items: []),
+            ]
+        }
+
+        if !sections.contains(where: { $0.id == "backlog" }) {
+            sections.append(TodoSection(id: "backlog", title: "Backlog", isExpanded: true, items: []))
+        }
+
+        return sections
     }
 
     static func render(_ sections: [TodoSection]) -> String {
+        let weekly = sections
+            .filter { isWeeklySection($0) && !$0.items.isEmpty }
+            .sorted { (weekNumber(from: $0) ?? 0) > (weekNumber(from: $1) ?? 0) }
+        let backlog = sections.filter { $0.id == "backlog" }
+        let ordered = weekly + backlog
+
         var lines: [String] = []
-        for (i, section) in sections.enumerated() {
+        for (i, section) in ordered.enumerated() {
             if i > 0 { lines.append("") }
             lines.append("## \(section.title)")
             lines.append("")
@@ -155,9 +238,4 @@ class TodoStore {
             .filter { !$0.isEmpty }
             .joined(separator: "-")
     }
-
-    static let defaultSections: [TodoSection] = [
-        TodoSection(id: "todos-weekly", title: "TODOs - Weekly", isExpanded: true, items: []),
-        TodoSection(id: "backlog", title: "Backlog", isExpanded: true, items: []),
-    ]
 }

@@ -21,14 +21,151 @@ extension View {
     }
 }
 
+// MARK: - Week Picker
+
+struct WeekPickerView: View {
+    @Binding var selectedWeek: Int
+    var store: TodoStore
+
+    private let currentWeek = TodoStore.currentCalendarWeek
+    private let boxWidth: CGFloat = 40
+    private let boxSpacing: CGFloat = 6
+
+    @State private var dragOffset: CGFloat = 0
+    @State private var baseOffset: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var didInitialize = false
+
+    private var totalBoxWidth: CGFloat { boxWidth + boxSpacing }
+
+    private func offsetForWeek(_ week: Int) -> CGFloat {
+        let idx = CGFloat(week - weekRange.first!)
+        return -idx * totalBoxWidth + containerWidth / 2 - boxWidth / 2
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let weeks = weekRange
+            HStack(spacing: boxSpacing) {
+                ForEach(weeks, id: \.self) { week in
+                    WeekBox(
+                        week: week,
+                        isSelected: week == selectedWeek,
+                        isCurrent: week == currentWeek,
+                        hasContent: store.weeksWithContent().contains(week)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedWeek = week
+                            store.ensureWeekSection(week)
+                            baseOffset = offsetForWeek(week)
+                        }
+                    }
+                    .pointerStyle()
+                }
+            }
+            .offset(x: baseOffset + dragOffset)
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        dragOffset = value.translation.width
+                    }
+                    .onEnded { value in
+                        let combined = baseOffset + dragOffset
+                        let idx = round(-(combined - containerWidth / 2 + boxWidth / 2) / totalBoxWidth)
+                        let clampedIdx = Int(max(0, min(CGFloat(weeks.count - 1), idx)))
+                        let snappedWeek = weeks[clampedIdx]
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            selectedWeek = snappedWeek
+                            store.ensureWeekSection(snappedWeek)
+                            baseOffset = offsetForWeek(snappedWeek)
+                            dragOffset = 0
+                        }
+                    }
+            )
+            .onAppear {
+                containerWidth = geo.size.width
+                if !didInitialize {
+                    baseOffset = offsetForWeek(selectedWeek)
+                    didInitialize = true
+                }
+            }
+            .onChange(of: geo.size.width) { _, newWidth in
+                containerWidth = newWidth
+                baseOffset = offsetForWeek(selectedWeek)
+            }
+        }
+        .frame(height: 50)
+        .clipped()
+    }
+
+    private var weekRange: [Int] {
+        let start = max(1, currentWeek - 10)
+        let end = min(52, currentWeek + 10)
+        return Array(start...end)
+    }
+}
+
+struct WeekBox: View {
+    let week: Int
+    let isSelected: Bool
+    let isCurrent: Bool
+    let hasContent: Bool
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Text("W\(week)")
+                .font(.system(size: 12, weight: isSelected ? .bold : .regular, design: .monospaced))
+                .foregroundStyle(isSelected ? Color(.windowBackgroundColor) : .primary)
+                .frame(width: 40, height: 38)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isSelected ? Color.primary : Color.clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.primary.opacity(isSelected ? 0 : 0.25), lineWidth: 1)
+                )
+
+            Circle()
+                .fill(Color.primary.opacity(hasContent && !isSelected ? 0.3 : 0))
+                .frame(width: 4, height: 4)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Content View
+
 struct ContentView: View {
     @State private var store = TodoStore()
+    @State private var selectedWeek = TodoStore.currentCalendarWeek
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                ForEach(store.sections) { section in
-                    SectionView(section: section, store: store)
+                WeekPickerView(selectedWeek: $selectedWeek, store: store)
+                    .padding(.bottom, 4)
+
+                if let weekSection = store.sections.first(where: { $0.id == "w\(selectedWeek)" }) {
+                    SectionView(
+                        section: weekSection,
+                        store: store,
+                        displayTitle: "TODOs - Weekly",
+                        moveTargetID: "backlog",
+                        moveIsUp: false
+                    )
+                    .id(weekSection.id)
+                }
+
+                if let backlog = store.sections.first(where: { $0.id == "backlog" }) {
+                    SectionView(
+                        section: backlog,
+                        store: store,
+                        moveTargetID: "w\(selectedWeek)",
+                        moveIsUp: true
+                    )
                 }
 
                 Text("Because done feels good.")
@@ -42,6 +179,12 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(.windowBackgroundColor))
+        .onAppear {
+            store.ensureWeekSection(selectedWeek)
+        }
+        .onChange(of: selectedWeek) {
+            store.ensureWeekSection(selectedWeek)
+        }
     }
 }
 
@@ -50,6 +193,9 @@ struct ContentView: View {
 struct SectionView: View {
     let section: TodoSection
     var store: TodoStore
+    var displayTitle: String? = nil
+    var moveTargetID: String? = nil
+    var moveIsUp: Bool = false
     @State private var newTaskText = ""
 
     var body: some View {
@@ -65,15 +211,9 @@ struct SectionView: View {
                         .foregroundStyle(.secondary)
                         .rotationEffect(.degrees(section.isExpanded ? 90 : 0))
 
-                    Text(section.title)
+                    Text(displayTitle ?? section.title)
                         .font(.system(.body, design: .monospaced).weight(.semibold))
                         .foregroundStyle(.primary)
-
-                    if section.id.contains("weekly") {
-                        Text("W\(Calendar.current.component(.weekOfYear, from: Date()))")
-                            .font(.system(.callout, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
             .buttonStyle(.plain)
@@ -85,7 +225,13 @@ struct SectionView: View {
                 let done = section.items.filter { $0.done }
 
                 ForEach(pending) { item in
-                    TodoRowView(item: item, sectionID: section.id, store: store)
+                    TodoRowView(
+                        item: item,
+                        sectionID: section.id,
+                        store: store,
+                        moveTargetID: moveTargetID,
+                        moveIsUp: moveIsUp
+                    )
                 }
 
                 AddTaskRow(text: $newTaskText) {
@@ -96,7 +242,13 @@ struct SectionView: View {
                 }
 
                 if !done.isEmpty {
-                    CompletedGroup(items: done, sectionID: section.id, store: store)
+                    CompletedGroup(
+                        items: done,
+                        sectionID: section.id,
+                        store: store,
+                        moveTargetID: moveTargetID,
+                        moveIsUp: moveIsUp
+                    )
                 }
             }
         }
@@ -109,15 +261,20 @@ struct TodoRowView: View {
     let item: TodoItem
     let sectionID: String
     var store: TodoStore
+    var moveTargetID: String?
+    var moveIsUp: Bool
     @State private var editText: String
     @State private var isHovered = false
     @State private var strikeProgress: CGFloat
     @State private var dimmed: Bool
 
-    init(item: TodoItem, sectionID: String, store: TodoStore) {
+    init(item: TodoItem, sectionID: String, store: TodoStore,
+         moveTargetID: String? = nil, moveIsUp: Bool = false) {
         self.item = item
         self.sectionID = sectionID
         self.store = store
+        self.moveTargetID = moveTargetID
+        self.moveIsUp = moveIsUp
         self._editText = State(initialValue: item.text)
         self._strikeProgress = State(initialValue: item.done ? 1 : 0)
         self._dimmed = State(initialValue: item.done)
@@ -159,26 +316,24 @@ struct TodoRowView: View {
                         store.updateItemText(sectionID: sectionID, itemID: item.id, text: editText)
                     }
             }
-
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .trailing) {
             HStack(spacing: 2) {
-                if let target = store.targetSectionID(for: sectionID) {
-                    let isBacklog = sectionID != store.sections.first?.id
+                if let target = moveTargetID {
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             store.moveItem(itemID: item.id, fromSection: sectionID, toSection: target)
                         }
                     } label: {
-                        Image(systemName: isBacklog ? "arrow.up" : "arrow.down")
+                        Image(systemName: moveIsUp ? "arrow.up" : "arrow.down")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(.secondary)
                             .frame(width: 24, height: 24)
                     }
                     .buttonStyle(.plain)
                     .pointerStyle()
-                    .help(isBacklog ? "Move to Weekly" : "Move to Backlog")
+                    .help(moveIsUp ? "Move to Weekly" : "Move to Backlog")
                 }
 
                 Button {
@@ -225,6 +380,8 @@ struct CompletedGroup: View {
     let items: [TodoItem]
     let sectionID: String
     var store: TodoStore
+    var moveTargetID: String? = nil
+    var moveIsUp: Bool = false
     @State private var isExpanded = false
 
     var body: some View {
@@ -252,7 +409,13 @@ struct CompletedGroup: View {
 
             if isExpanded {
                 ForEach(items) { item in
-                    TodoRowView(item: item, sectionID: sectionID, store: store)
+                    TodoRowView(
+                        item: item,
+                        sectionID: sectionID,
+                        store: store,
+                        moveTargetID: moveTargetID,
+                        moveIsUp: moveIsUp
+                    )
                 }
             }
         }
