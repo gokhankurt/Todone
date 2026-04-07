@@ -44,6 +44,7 @@ struct WeekPickerView: View {
     }
 
     var body: some View {
+        let contentWeeks = store.weeksWithContent()
         GeometryReader { geo in
             let weeks = weekRange
             HStack(spacing: boxSpacing) {
@@ -52,7 +53,7 @@ struct WeekPickerView: View {
                         week: week,
                         isSelected: week == selectedWeek,
                         isCurrent: week == currentWeek,
-                        hasContent: store.weeksWithContent().contains(week)
+                        hasContent: contentWeeks.contains(week)
                     )
                     .contentShape(Rectangle())
                     .onTapGesture {
@@ -113,23 +114,25 @@ struct WeekBox: View {
     let isCurrent: Bool
     let hasContent: Bool
 
+    private var isPast: Bool { week < TodoStore.currentCalendarWeek }
+
     var body: some View {
         VStack(spacing: 3) {
             Text("W\(week)")
                 .font(.system(size: 12, weight: isSelected ? .bold : .regular, design: .monospaced))
-                .foregroundStyle(isSelected ? Color(.windowBackgroundColor) : .primary)
+                .foregroundStyle(isSelected ? Color(.windowBackgroundColor) : (isPast ? .secondary : .primary))
                 .frame(width: 40, height: 38)
                 .background(
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(isSelected ? Color.primary : Color.clear)
+                        .fill(isSelected ? Color.primary : (isPast ? Color.primary.opacity(0.04) : Color.clear))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
-                        .stroke(Color.primary.opacity(isSelected ? 0 : 0.25), lineWidth: 1)
+                        .stroke(Color.primary.opacity(isSelected ? 0 : (isPast ? 0.12 : 0.25)), lineWidth: 1)
                 )
 
             Circle()
-                .fill(Color.primary.opacity(hasContent && !isSelected ? 0.3 : 0))
+                .fill(hasContent && !isSelected ? Color.primary.opacity(0.3) : Color.clear)
                 .frame(width: 4, height: 4)
         }
         .contentShape(Rectangle())
@@ -184,6 +187,15 @@ struct ContentView: View {
         }
         .onChange(of: selectedWeek) {
             store.ensureWeekSection(selectedWeek)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            let cw = TodoStore.currentCalendarWeek
+            if cw != selectedWeek {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    selectedWeek = cw
+                }
+                store.ensureWeekSection(cw)
+            }
         }
     }
 }

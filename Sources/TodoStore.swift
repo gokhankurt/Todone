@@ -54,7 +54,7 @@ class TodoStore {
     // MARK: - Week management
 
     static var currentCalendarWeek: Int {
-        Calendar.current.component(.weekOfYear, from: Date())
+        Calendar(identifier: .iso8601).component(.weekOfYear, from: Date())
     }
 
     func ensureWeekSection(_ week: Int) {
