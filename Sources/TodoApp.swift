@@ -35,6 +35,7 @@ struct TodoneApp: App {
         WindowGroup("Todone") {
             RootView()
         }
-        .defaultSize(width: 560, height: 680)
+        .defaultSize(width: 840, height: 700)
+        .windowStyle(.hiddenTitleBar)
     }
 }
